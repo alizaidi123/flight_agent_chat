@@ -140,14 +140,32 @@ if st.session_state.api_key_configured:
 
         response = ""
         if st.session_state.conversation_stage == 'awaiting_cities':
-            llm_parse_prompt = f"The user said: '{prompt}'. Extract the departure city and destination city. Respond in JSON format like {{'departure': 'CityA', 'destination': 'CityB'}}. If not clear, respond with empty strings for values."
+            # Updated LLM parse prompt to request a delimited string
+            llm_parse_prompt = f"The user said: '{prompt}'. Extract the departure city and destination city. Respond only with 'DEPARTURE: CityA|DESTINATION: CityB'. If not clear, respond with 'DEPARTURE: |DESTINATION: '."
             parsed_cities_str = get_openai_response(llm_parse_prompt, [])
             
             try:
-                import json
-                parsed_cities = json.loads(parsed_cities_str.strip())
-                st.session_state.departure_city = parsed_cities.get('departure', '')
-                st.session_state.destination_city = parsed_cities.get('destination', '')
+                # Parse the delimited string from the LLM
+                parsed_cities_str = parsed_cities_str.strip()
+                departure_prefix = "DEPARTURE: "
+                destination_prefix = "DESTINATION: "
+                
+                departure_start = parsed_cities_str.find(departure_prefix)
+                destination_start = parsed_cities_str.find(destination_prefix)
+
+                dep_city = ""
+                dest_city = ""
+
+                if departure_start != -1 and destination_start != -1:
+                    dep_city_end = parsed_cities_str.find("|", departure_start)
+                    if dep_city_end == -1:
+                        dep_city_end = len(parsed_cities_str) # If no pipe, assume it's the end of string
+                    
+                    dep_city = parsed_cities_str[departure_start + len(departure_prefix) : dep_city_end].strip()
+                    dest_city = parsed_cities_str[destination_start + len(destination_prefix) :].strip()
+
+                st.session_state.departure_city = dep_city
+                st.session_state.destination_city = dest_city
 
                 if st.session_state.departure_city and st.session_state.destination_city:
                     flights_found = find_flights(st.session_state.departure_city, st.session_state.destination_city)
@@ -159,9 +177,7 @@ if st.session_state.api_key_configured:
                         response = f"I couldn't find any flights from {st.session_state.departure_city} to {st.session_state.destination_city}. Please try different cities or routes."
                         st.session_state.conversation_stage = 'awaiting_cities'
                 else:
-                    response = "I couldn't understand the departure and destination cities. Could you please specify them clearly? (e.g., 'I want to fly from New York to London')"
-            except json.JSONDecodeError:
-                response = "I had trouble understanding that. Please ensure you clearly state your departure and destination cities."
+                    response = "I couldn't understand the departure and destination cities. Could you please specify them clearly? (e.g., 'I want to fly from Karachi to London')"
             except Exception as e:
                 response = f"There was an issue parsing your request. Please try again. Error: {e}"
 
