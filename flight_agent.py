@@ -3,6 +3,7 @@ import pandas as pd
 from openai import OpenAI
 import os
 import dotenv
+import json # Ensure json is imported for robust parsing
 
 dotenv.load_dotenv()
 
@@ -86,7 +87,7 @@ def get_openai_response(prompt_text, chat_history):
         completion = st.session_state.client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=messages_for_openai,
-            max_tokens=150,
+            max_tokens=200, # Increased max_tokens to allow for more names
             temperature=0.7,
         )
         return completion.choices[0].message.content
@@ -118,12 +119,17 @@ def format_flights_for_llm(flights_list):
     flight_str += "Please tell me the **Flight ID** you are interested in booking (e.g., FL001)."
     return flight_str
 
-def simulate_booking(flight_id, name, num_tickets):
+def simulate_booking(flight_id, passenger_names):
+    # In a real app, this would interact with a booking system
+    # For now, we'll just check if the flight exists and seats are available
+    num_tickets = len(passenger_names)
     flight = next((f for f in FLIGHTS if f["flight_id"] == flight_id), None)
+    
     if flight and flight["available_seats"] >= num_tickets:
+        names_str = ", ".join(passenger_names)
         return (
-            f"Congratulations, {name}! Your booking for **{num_tickets}** ticket(s) on "
-            f"**Flight {flight_id}** from **{flight['departure']} to {flight['destination']}** "
+            f"Congratulations! Your booking for **{num_tickets}** ticket(s) for passengers: "
+            f"**{names_str}** on **Flight {flight_id}** from **{flight['departure']} to {flight['destination']}** "
             f"at **{flight['time']}** with **{flight['airline']}** for a total of **${flight['price'] * num_tickets}** has been confirmed.\n\n"
             "Enjoy your flight! To book another flight, please refresh the page."
         )
@@ -190,8 +196,8 @@ if st.session_state.api_key_configured:
                 selected_flight = next((f for f in st.session_state.available_flights if f["flight_id"] == potential_flight_id), None)
                 if selected_flight:
                     st.session_state.selected_flight = selected_flight
-                    # Clarified AI prompt: requesting primary booker's name and total tickets
-                    response = f"You've selected Flight {selected_flight['flight_id']}. Great choice! To proceed with the booking, please provide the **full name of the primary passenger** and the **total number of tickets** you wish to book. (e.g., 'My name is John Doe, and I want 2 tickets')"
+                    # Updated AI prompt: requesting all passenger names and total tickets
+                    response = f"You've selected Flight {selected_flight['flight_id']}. Great choice! To proceed with the booking, please provide the **full names of all passengers** and the **total number of tickets** you wish to book. (e.g., 'Passengers: John Doe, Jane Smith; Tickets: 2')"
                     st.session_state.conversation_stage = 'awaiting_booking_details'
                     flight_id_match = True
                 else:
@@ -205,8 +211,8 @@ if st.session_state.api_key_configured:
                     selected_flight = next((f for f in st.session_state.available_flights if f["flight_id"] == parsed_flight_id), None)
                     if selected_flight:
                         st.session_state.selected_flight = selected_flight
-                        # Clarified AI prompt: requesting primary booker's name and total tickets
-                        response = f"You've selected Flight {selected_flight['flight_id']}. Great choice! To proceed with the booking, please provide the **full name of the primary passenger** and the **total number of tickets** you wish to book. (e.g., 'My name is John Doe, and I want 2 tickets')"
+                        # Updated AI prompt: requesting all passenger names and total tickets
+                        response = f"You've selected Flight {selected_flight['flight_id']}. Great choice! To proceed with the booking, please provide the **full names of all passengers** and the **total number of tickets** you wish to book. (e.g., 'Passengers: John Doe, Jane Smith; Tickets: 2')"
                         st.session_state.conversation_stage = 'awaiting_booking_details'
                     else:
                         response = "I found a Flight ID in your message, but it doesn't match any of the available flights. Please choose from the displayed options."
@@ -219,24 +225,25 @@ if st.session_state.api_key_configured:
 
         elif st.session_state.conversation_stage == 'awaiting_booking_details':
             if st.session_state.selected_flight:
-                # Modified LLM parse prompt to focus on single name and total tickets
-                llm_parse_prompt = f"The user wants to book a flight. Their input is '{prompt}'. Extract the full name of the primary passenger and the total number of tickets. Respond in JSON format like {{'name': 'Full Name', 'tickets': X}}. If information is missing, use empty string for name or 0 for tickets."
+                # Updated LLM parse prompt to extract a list of names and total tickets
+                llm_parse_prompt = f"The user wants to book a flight. Their input is '{prompt}'. Extract a list of all passenger full names and the total number of tickets. Respond in JSON format like {{'names': ['Name1', 'Name2'], 'tickets': X}}. If information is missing, use empty list for names or 0 for tickets."
                 parsed_booking_details_str = get_openai_response(llm_parse_prompt, [])
                 
                 try:
-                    import json
                     parsed_booking_details = json.loads(parsed_booking_details_str.strip())
-                    user_name = parsed_booking_details.get('name', '')
+                    passenger_names = parsed_booking_details.get('names', [])
                     num_tickets = int(parsed_booking_details.get('tickets', 0))
 
-                    if user_name and num_tickets > 0:
-                        booking_confirmation = simulate_booking(st.session_state.selected_flight['flight_id'], user_name, num_tickets)
+                    if passenger_names and num_tickets > 0 and len(passenger_names) == num_tickets:
+                        booking_confirmation = simulate_booking(st.session_state.selected_flight['flight_id'], passenger_names)
                         response = booking_confirmation
                         st.session_state.conversation_stage = 'booking_confirmed'
+                    elif passenger_names and num_tickets > 0 and len(passenger_names) != num_tickets:
+                        response = "It looks like the number of names provided doesn't match the number of tickets. Please provide the full names for ALL passengers and the total number of tickets. (e.g., 'Passengers: John Doe, Jane Smith; Tickets: 2')"
                     else:
-                        response = "I couldn't get the primary passenger's full name or the total number of tickets. Please provide both to complete the booking. (e.g., 'My name is Jane Smith, and I need 1 ticket')"
+                        response = "I couldn't get the passenger names or the total number of tickets. Please provide both to complete the booking. (e.g., 'Passengers: Jane Smith; Tickets: 1')"
                 except json.JSONDecodeError:
-                    response = "I had trouble understanding your booking details. Please ensure you provide a single name and the total number of tickets clearly."
+                    response = "I had trouble understanding your booking details. Please ensure you provide names as a list and the total number of tickets clearly, like: {'names': ['Name1', 'Name2'], 'tickets': X}"
                 except Exception as e:
                     response = f"There was an issue processing your booking details. Please try again. Error: {e}"
             else:
