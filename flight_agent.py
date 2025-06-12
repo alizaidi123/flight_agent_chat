@@ -85,7 +85,7 @@ def get_openai_response(prompt_text, chat_history):
 
     try:
         completion = st.session_state.client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini", # Changed model to gpt-4o-mini
             messages=messages_for_openai,
             max_tokens=200,
             temperature=0.7,
@@ -159,15 +159,12 @@ if st.session_state.api_key_configured:
                 dest_city = ""
 
                 if departure_start != -1 and destination_start != -1:
-                    # Find the end of the departure city
                     dep_city_end = parsed_cities_str.find("|", departure_start)
-                    if dep_city_end == -1: # If no pipe, it means destination is not present or at the very end
-                        # Check if destination string starts before departure_start + len(departure_prefix)
-                        # This handles cases where destination might be extracted first or parsing error
-                        if destination_start < departure_start: # This case is unlikely if the prompt is followed
-                            dep_city_end = len(parsed_cities_str) # Treat as end of string if malformed
+                    if dep_city_end == -1:
+                        if destination_start < departure_start:
+                            dep_city_end = len(parsed_cities_str)
                         else:
-                            dep_city_end = destination_start - 1 if destination_start > departure_start + len(departure_prefix) else len(parsed_cities_str) # Get the end before destination_prefix
+                            dep_city_end = destination_start - 1 if destination_start > departure_start + len(departure_prefix) else len(parsed_cities_str)
                     
                     dep_city = parsed_cities_str[departure_start + len(departure_prefix) : dep_city_end].strip()
                     dest_city = parsed_cities_str[destination_start + len(destination_prefix) :].strip()
@@ -227,7 +224,6 @@ if st.session_state.api_key_configured:
 
         elif st.session_state.conversation_stage == 'awaiting_booking_details':
             if st.session_state.selected_flight:
-                # Updated LLM parse prompt to extract names and tickets in a delimited string
                 llm_parse_prompt = f"The user wants to book a flight. Their input is '{prompt}'. Extract the full names of passengers (comma-separated) and the total number of tickets. Respond only with 'NAMES: Name1, Name2|TICKETS: X'. If information is missing, respond with 'NAMES: |TICKETS: 0'."
                 parsed_booking_details_str = get_openai_response(llm_parse_prompt, [])
                 
