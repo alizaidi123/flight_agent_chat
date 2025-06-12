@@ -111,7 +111,7 @@ def format_flights_for_llm(flights_list):
             f"**Flight ID:** {flight['flight_id']}\n"
             f"  - **Route:** {flight['departure']} to {flight['destination']}\n"
             f"  - **Time:** {flight['time']}\n"
-            f"  - **Price:** ${flight['price']}\n"
+            f"  - **Price:** Rs{flight['price']}\n"
             f"  - **Airline:** {flight['airline']}\n"
             f"  - **Available Seats:** {flight['available_seats']}\n\n"
         )
