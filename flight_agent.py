@@ -3,7 +3,7 @@ import pandas as pd
 from openai import OpenAI
 import os
 import dotenv
-import json # Ensure json is imported for robust parsing
+import json
 
 dotenv.load_dotenv()
 
@@ -87,7 +87,7 @@ def get_openai_response(prompt_text, chat_history):
         completion = st.session_state.client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=messages_for_openai,
-            max_tokens=200, # Increased max_tokens to allow for more names
+            max_tokens=200,
             temperature=0.7,
         )
         return completion.choices[0].message.content
@@ -120,8 +120,6 @@ def format_flights_for_llm(flights_list):
     return flight_str
 
 def simulate_booking(flight_id, passenger_names):
-    # In a real app, this would interact with a booking system
-    # For now, we'll just check if the flight exists and seats are available
     num_tickets = len(passenger_names)
     flight = next((f for f in FLIGHTS if f["flight_id"] == flight_id), None)
     
@@ -130,7 +128,7 @@ def simulate_booking(flight_id, passenger_names):
         return (
             f"Congratulations! Your booking for **{num_tickets}** ticket(s) for passengers: "
             f"**{names_str}** on **Flight {flight_id}** from **{flight['departure']} to {flight['destination']}** "
-            f"at **{flight['time']}** with **{flight['airline']}** for a total of **${flight['price'] * num_tickets}** has been confirmed.\n\n"
+            f"at **{flight['time']}** with **{flight['airline']}** for a total of **Rs{flight['price'] * num_tickets}** has been confirmed.\n\n"
             "Enjoy your flight! To book another flight, please refresh the page."
         )
     elif flight:
@@ -161,9 +159,15 @@ if st.session_state.api_key_configured:
                 dest_city = ""
 
                 if departure_start != -1 and destination_start != -1:
+                    # Find the end of the departure city
                     dep_city_end = parsed_cities_str.find("|", departure_start)
-                    if dep_city_end == -1:
-                        dep_city_end = len(parsed_cities_str)
+                    if dep_city_end == -1: # If no pipe, it means destination is not present or at the very end
+                        # Check if destination string starts before departure_start + len(departure_prefix)
+                        # This handles cases where destination might be extracted first or parsing error
+                        if destination_start < departure_start: # This case is unlikely if the prompt is followed
+                            dep_city_end = len(parsed_cities_str) # Treat as end of string if malformed
+                        else:
+                            dep_city_end = destination_start - 1 if destination_start > departure_start + len(departure_prefix) else len(parsed_cities_str) # Get the end before destination_prefix
                     
                     dep_city = parsed_cities_str[departure_start + len(departure_prefix) : dep_city_end].strip()
                     dest_city = parsed_cities_str[destination_start + len(destination_prefix) :].strip()
@@ -196,8 +200,7 @@ if st.session_state.api_key_configured:
                 selected_flight = next((f for f in st.session_state.available_flights if f["flight_id"] == potential_flight_id), None)
                 if selected_flight:
                     st.session_state.selected_flight = selected_flight
-                    # Updated AI prompt: requesting all passenger names and total tickets
-                    response = f"You've selected Flight {selected_flight['flight_id']}. Great choice! To proceed with the booking, please provide the **full names of all passengers** and the **total number of tickets** you wish to book. (e.g., 'Passengers: John Doe, Jane Smith; Tickets: 2')"
+                    response = f"You've selected Flight {selected_flight['flight_id']}. Great choice! To proceed with the booking, please provide the **full names of all passengers (comma-separated)** and the **total number of tickets** you wish to book. (e.g., 'Names: John Doe, Jane Smith; Tickets: 2')"
                     st.session_state.conversation_stage = 'awaiting_booking_details'
                     flight_id_match = True
                 else:
@@ -211,8 +214,7 @@ if st.session_state.api_key_configured:
                     selected_flight = next((f for f in st.session_state.available_flights if f["flight_id"] == parsed_flight_id), None)
                     if selected_flight:
                         st.session_state.selected_flight = selected_flight
-                        # Updated AI prompt: requesting all passenger names and total tickets
-                        response = f"You've selected Flight {selected_flight['flight_id']}. Great choice! To proceed with the booking, please provide the **full names of all passengers** and the **total number of tickets** you wish to book. (e.g., 'Passengers: John Doe, Jane Smith; Tickets: 2')"
+                        response = f"You've selected Flight {selected_flight['flight_id']}. Great choice! To proceed with the booking, please provide the **full names of all passengers (comma-separated)** and the **total number of tickets** you wish to book. (e.g., 'Names: John Doe, Jane Smith; Tickets: 2')"
                         st.session_state.conversation_stage = 'awaiting_booking_details'
                     else:
                         response = "I found a Flight ID in your message, but it doesn't match any of the available flights. Please choose from the displayed options."
@@ -225,25 +227,42 @@ if st.session_state.api_key_configured:
 
         elif st.session_state.conversation_stage == 'awaiting_booking_details':
             if st.session_state.selected_flight:
-                # Updated LLM parse prompt to extract a list of names and total tickets
-                llm_parse_prompt = f"The user wants to book a flight. Their input is '{prompt}'. Extract a list of all passenger full names and the total number of tickets. Respond in JSON format like {{'names': ['Name1', 'Name2'], 'tickets': X}}. If information is missing, use empty list for names or 0 for tickets."
+                # Updated LLM parse prompt to extract names and tickets in a delimited string
+                llm_parse_prompt = f"The user wants to book a flight. Their input is '{prompt}'. Extract the full names of passengers (comma-separated) and the total number of tickets. Respond only with 'NAMES: Name1, Name2|TICKETS: X'. If information is missing, respond with 'NAMES: |TICKETS: 0'."
                 parsed_booking_details_str = get_openai_response(llm_parse_prompt, [])
                 
                 try:
-                    parsed_booking_details = json.loads(parsed_booking_details_str.strip())
-                    passenger_names = parsed_booking_details.get('names', [])
-                    num_tickets = int(parsed_booking_details.get('tickets', 0))
+                    parsed_booking_details_str = parsed_booking_details_str.strip()
+                    names_prefix = "NAMES: "
+                    tickets_prefix = "TICKETS: "
+                    
+                    names_start = parsed_booking_details_str.find(names_prefix)
+                    tickets_start = parsed_booking_details_str.find(tickets_prefix)
+
+                    passenger_names = []
+                    num_tickets = 0
+
+                    if names_start != -1 and tickets_start != -1:
+                        names_end = parsed_booking_details_str.find("|", names_start)
+                        if names_end == -1:
+                            names_end = tickets_start - 1 if tickets_start > names_start else len(parsed_booking_details_str)
+
+                        names_raw = parsed_booking_details_str[names_start + len(names_prefix) : names_end].strip()
+                        if names_raw:
+                            passenger_names = [name.strip() for name in names_raw.split(',')]
+                        
+                        tickets_raw = parsed_booking_details_str[tickets_start + len(tickets_prefix) :].strip()
+                        if tickets_raw.isdigit():
+                            num_tickets = int(tickets_raw)
 
                     if passenger_names and num_tickets > 0 and len(passenger_names) == num_tickets:
                         booking_confirmation = simulate_booking(st.session_state.selected_flight['flight_id'], passenger_names)
                         response = booking_confirmation
                         st.session_state.conversation_stage = 'booking_confirmed'
                     elif passenger_names and num_tickets > 0 and len(passenger_names) != num_tickets:
-                        response = "It looks like the number of names provided doesn't match the number of tickets. Please provide the full names for ALL passengers and the total number of tickets. (e.g., 'Passengers: John Doe, Jane Smith; Tickets: 2')"
+                        response = "It looks like the number of names provided doesn't match the number of tickets. Please provide the full names for ALL passengers (comma-separated) and the total number of tickets. (e.g., 'Names: John Doe, Jane Smith; Tickets: 2')"
                     else:
-                        response = "I couldn't get the passenger names or the total number of tickets. Please provide both to complete the booking. (e.g., 'Passengers: Jane Smith; Tickets: 1')"
-                except json.JSONDecodeError:
-                    response = "I had trouble understanding your booking details. Please ensure you provide names as a list and the total number of tickets clearly, like: {'names': ['Name1', 'Name2'], 'tickets': X}"
+                        response = "I couldn't get the passenger names or the total number of tickets. Please provide both to complete the booking. (e.g., 'Names: Jane Smith; Tickets: 1')"
                 except Exception as e:
                     response = f"There was an issue processing your booking details. Please try again. Error: {e}"
             else:
