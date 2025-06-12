@@ -140,12 +140,10 @@ if st.session_state.api_key_configured:
 
         response = ""
         if st.session_state.conversation_stage == 'awaiting_cities':
-            # Updated LLM parse prompt to request a delimited string
             llm_parse_prompt = f"The user said: '{prompt}'. Extract the departure city and destination city. Respond only with 'DEPARTURE: CityA|DESTINATION: CityB'. If not clear, respond with 'DEPARTURE: |DESTINATION: '."
             parsed_cities_str = get_openai_response(llm_parse_prompt, [])
             
             try:
-                # Parse the delimited string from the LLM
                 parsed_cities_str = parsed_cities_str.strip()
                 departure_prefix = "DEPARTURE: "
                 destination_prefix = "DESTINATION: "
@@ -159,7 +157,7 @@ if st.session_state.api_key_configured:
                 if departure_start != -1 and destination_start != -1:
                     dep_city_end = parsed_cities_str.find("|", departure_start)
                     if dep_city_end == -1:
-                        dep_city_end = len(parsed_cities_str) # If no pipe, assume it's the end of string
+                        dep_city_end = len(parsed_cities_str)
                     
                     dep_city = parsed_cities_str[departure_start + len(departure_prefix) : dep_city_end].strip()
                     dest_city = parsed_cities_str[destination_start + len(destination_prefix) :].strip()
@@ -192,7 +190,8 @@ if st.session_state.api_key_configured:
                 selected_flight = next((f for f in st.session_state.available_flights if f["flight_id"] == potential_flight_id), None)
                 if selected_flight:
                     st.session_state.selected_flight = selected_flight
-                    response = f"You've selected Flight {selected_flight['flight_id']}. Great choice! To proceed with the booking, please provide your **full name** and the **number of tickets** you wish to book. (e.g., 'My name is John Doe, and I want 2 tickets')"
+                    # Clarified AI prompt: requesting primary booker's name and total tickets
+                    response = f"You've selected Flight {selected_flight['flight_id']}. Great choice! To proceed with the booking, please provide the **full name of the primary passenger** and the **total number of tickets** you wish to book. (e.g., 'My name is John Doe, and I want 2 tickets')"
                     st.session_state.conversation_stage = 'awaiting_booking_details'
                     flight_id_match = True
                 else:
@@ -206,7 +205,8 @@ if st.session_state.api_key_configured:
                     selected_flight = next((f for f in st.session_state.available_flights if f["flight_id"] == parsed_flight_id), None)
                     if selected_flight:
                         st.session_state.selected_flight = selected_flight
-                        response = f"You've selected Flight {selected_flight['flight_id']}. Great choice! To proceed with the booking, please provide your **full name** and the **number of tickets** you wish to book. (e.g., 'My name is John Doe, and I want 2 tickets')"
+                        # Clarified AI prompt: requesting primary booker's name and total tickets
+                        response = f"You've selected Flight {selected_flight['flight_id']}. Great choice! To proceed with the booking, please provide the **full name of the primary passenger** and the **total number of tickets** you wish to book. (e.g., 'My name is John Doe, and I want 2 tickets')"
                         st.session_state.conversation_stage = 'awaiting_booking_details'
                     else:
                         response = "I found a Flight ID in your message, but it doesn't match any of the available flights. Please choose from the displayed options."
@@ -219,7 +219,8 @@ if st.session_state.api_key_configured:
 
         elif st.session_state.conversation_stage == 'awaiting_booking_details':
             if st.session_state.selected_flight:
-                llm_parse_prompt = f"The user wants to book a flight. Their input is '{prompt}'. Extract the full name and the number of tickets. Respond in JSON format like {{'name': 'Full Name', 'tickets': X}}. If information is missing, use empty string for name or 0 for tickets."
+                # Modified LLM parse prompt to focus on single name and total tickets
+                llm_parse_prompt = f"The user wants to book a flight. Their input is '{prompt}'. Extract the full name of the primary passenger and the total number of tickets. Respond in JSON format like {{'name': 'Full Name', 'tickets': X}}. If information is missing, use empty string for name or 0 for tickets."
                 parsed_booking_details_str = get_openai_response(llm_parse_prompt, [])
                 
                 try:
@@ -233,9 +234,9 @@ if st.session_state.api_key_configured:
                         response = booking_confirmation
                         st.session_state.conversation_stage = 'booking_confirmed'
                     else:
-                        response = "I couldn't get your full name or the number of tickets. Please provide both to complete the booking. (e.g., 'My name is Jane Smith, and I need 1 ticket')"
+                        response = "I couldn't get the primary passenger's full name or the total number of tickets. Please provide both to complete the booking. (e.g., 'My name is Jane Smith, and I need 1 ticket')"
                 except json.JSONDecodeError:
-                    response = "I had trouble understanding your booking details. Please try again."
+                    response = "I had trouble understanding your booking details. Please ensure you provide a single name and the total number of tickets clearly."
                 except Exception as e:
                     response = f"There was an issue processing your booking details. Please try again. Error: {e}"
             else:
